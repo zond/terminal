@@ -1,4 +1,4 @@
-// The colors package provide a simple way to bring colorful charcaters to terminal interface.
+// The colors package provide a simple way to bring colorful characters to terminal interface.
 //
 // This example will output the text with a Blue foreground and a Black background
 //      color.Println("@{bK}Example Text")
@@ -31,7 +31,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"log"
 )
 
 const (
@@ -40,7 +39,7 @@ const (
 )
 
 // Mapping from character to concrete escape code.
-var codeMap = map[int]int{
+var codeMap = map[byte]int{
 	'|': 0,
 	'!': 1,
 	'.': 2,
@@ -73,16 +72,17 @@ var codeMap = map[int]int{
 }
 
 // Compile color syntax string like "rG" to escape code.
-func Colorize(x string) string {
+func Colorize(x string) (result string, err error) {
 	attr := 0
 	fg := 39
 	bg := 49
 
 	for _, key := range x {
-		c, ok := codeMap[int(key)]
+		c, ok := codeMap[key]
 		switch {
 		case !ok:
-			log.Printf("Wrong color syntax: %c", key)
+			err = fmt.Errorf("Wrong color syntax: %c", key)
+			return
 		case 0 <= c && c <= 8:
 			attr = c
 		case 30 <= c && c <= 37:
@@ -91,112 +91,139 @@ func Colorize(x string) string {
 			bg = c
 		}
 	}
-	return fmt.Sprintf("\033[%d;%d;%dm", attr, fg, bg)
+	result = fmt.Sprintf("\033[%d;%d;%dm", attr, fg, bg)
+	return
 }
 
 // Handle state after meeting one '@'
-func compileColorSyntax(input, output *bytes.Buffer) {
+func compileColorSyntax(input, output *bytes.Buffer) (err error) {
 	i, _, err := input.ReadRune()
 	if err != nil {
-		// EOF got
-		log.Print("Parse failed on color syntax")
 		return
 	}
 
 	switch i {
 	default:
-		output.WriteString(Colorize(string(i)))
+		codes := ""
+		if codes, err = Colorize(string(i)); err != nil {
+			return
+		}
+		output.WriteString(codes)
 	case '{':
 		color := bytes.NewBufferString("")
 		for {
-			i, _, err := input.ReadRune()
+			i, _, err = input.ReadRune()
 			if err != nil {
-				log.Print("Parse failed on color syntax")
-				break
+				return
 			}
 			if i == '}' {
 				break
 			}
 			color.WriteRune(i)
 		}
-		output.WriteString(Colorize(color.String()))
+		codes := ""
+		if codes, err = Colorize(color.String()); err != nil {
+			return
+		}
+		output.WriteString(codes)
 	case EscapeChar:
 		output.WriteRune(EscapeChar)
 	}
+	return
 }
 
 // Compile the string and replace color syntax with concrete escape code.
-func compile(x string) string {
+func compile(x string) (result string, err error) {
 	if x == "" {
-		return ""
+		result = ""
+		return
 	}
 
 	input := bytes.NewBufferString(x)
-	output := bytes.NewBufferString("")
+	output := &bytes.Buffer{}
 
+	var i rune
 	for {
-		i, _, err := input.ReadRune()
+		i, _, err = input.ReadRune()
 		if err != nil {
-			break
+			return
 		}
 		switch i {
 		default:
 			output.WriteRune(i)
 		case EscapeChar:
-			compileColorSyntax(input, output)
+			if err = compileColorSyntax(input, output); err != nil {
+				return
+			}
 		}
 	}
-	return output.String()
+	result = output.String()
+	return
 }
 
 // Compile multiple values, only do compiling on string type.
-func compileValues(a *[]interface{}) {
+func compileValues(a *[]interface{}) (err error) {
 	for i, x := range *a {
 		if str, ok := x.(string); ok {
-			(*a)[i] = compile(str)
+			if (*a)[i], err = compile(str); err != nil {
+				return
+			}
 		}
 	}
+	return
 }
 
 // Similar to fmt.Print, will reset the color at the end.
-func Print(a ...interface{}) (int, error) {
+func Print(a ...interface{}) (result int, err error) {
 	a = append(a, ResetCode)
-	compileValues(&a)
+	if err = compileValues(&a); err != nil {
+		return
+	}
 	return fmt.Print(a...)
 }
 
 // Similar to fmt.Println, will reset the color at the end.
-func Println(a ...interface{}) (int, error) {
+func Println(a ...interface{}) (result int, err error) {
 	a = append(a, ResetCode)
-	compileValues(&a)
+	if err = compileValues(&a); err != nil {
+		return
+	}
 	return fmt.Println(a...)
 }
 
 // Similar to fmt.Printf, will reset the color at the end.
-func Printf(format string, a ...interface{}) (int, error) {
+func Printf(format string, a ...interface{}) (result int, err error) {
 	format += ResetCode
-	format = compile(format)
+	if format, err = compile(format); err != nil {
+		return
+	}
 	return fmt.Printf(format, a...)
 }
 
 // Similar to fmt.Fprint, will reset the color at the end.
-func Fprint(w io.Writer, a ...interface{}) (int, error) {
+func Fprint(w io.Writer, a ...interface{}) (result int, err error) {
 	a = append(a, ResetCode)
-	compileValues(&a)
+	if err = compileValues(&a); err != nil {
+		return
+	}
 	return fmt.Fprint(w, a...)
 }
 
 // Similar to fmt.Fprintln, will reset the color at the end.
-func Fprintln(w io.Writer, a ...interface{}) (int, error) {
+func Fprintln(w io.Writer, a ...interface{}) (result int, err error) {
 	a = append(a, ResetCode)
-	compileValues(&a)
+	if err = compileValues(&a); err != nil {
+		return
+	}
 	return fmt.Fprintln(w, a...)
 }
 
 // Similar to fmt.Fprintf, will reset the color at the end.
-func Fprintf(w io.Writer, format string, a ...interface{}) (int, error) {
+func Fprintf(w io.Writer, format string, a ...interface{}) (result int, err error) {
 	format += ResetCode
-	format = compile(format)
+	if format, err = compile(format); err != nil {
+		return
+	}
 	return fmt.Fprintf(w, format, a...)
 }
 
